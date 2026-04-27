@@ -1,0 +1,17 @@
+# YOLOv8 dependencies
+ultralytics
+opencv-python
+numpy
+pandas
+matplotlib
+
+# PyTorch (required for YOLOv8)
+torch
+ torchvision
+
+# FastAPI backend dependencies
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+python-multipart

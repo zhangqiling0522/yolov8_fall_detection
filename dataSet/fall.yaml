@@ -1,0 +1,7 @@
+path: e:\Graduition\Graduition_1\dataSet
+train: train/images
+test: test/images
+val: train/images  # 暂时使用训练集作为验证集
+
+names:
+  0: fall
