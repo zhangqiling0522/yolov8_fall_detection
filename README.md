@@ -367,6 +367,3 @@ cd ..
 npm run dev
 ```
 
-### 7. 访问系统
-
-打开浏览器访问：http://localhost:5173
