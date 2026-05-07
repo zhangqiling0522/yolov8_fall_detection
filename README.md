@@ -1,14 +1,51 @@
 # 基于YOLOv8的摔倒智能检测系统
 
+
 ## 项目简介
 
 本项目是一个基于YOLOv8的摔倒智能检测系统，旨在为养老院、医院等场所提供实时的老人安全监测服务。系统通过摄像头或视频文件进行实时摔倒检测，结合姿态估计技术区分躺卧、弯腰、站立等姿势，并通过时序间隔机制降低误报率。当检测到摔倒时，系统会通过前端界面和硬件蜂鸣器发出警报。
+
+## 项目结构
+
+```
+yolov8_fall_detection/
+├── backend/                    # 后端代码
+│   ├── main.py                 # FastAPI应用主文件
+│   ├── database.py             # 数据库连接配置
+│   ├── models.py               # 数据库模型定义
+│   ├── init_db.py              # 数据库初始化脚本
+│   ├── requirements.txt        # 后端依赖列表
+│   └── ...                     # 其他辅助脚本
+├── src/                        # 前端代码
+│   ├── components/             # 组件目录
+│   │   └── Login.vue           # 登录组件
+│   ├── views/                  # 页面目录
+│   │   ├── Home.vue            # 实时监测页面
+│   │   └── Profile.vue         # 个人中心页面
+│   ├── router/                 # 路由配置
+│   │   └── index.js            # 路由定义
+│   ├── pic/                    # 图片资源
+│   ├── App.vue                 # 根组件
+│   ├── main.js                 # 入口文件
+│   └── style.css               # 全局样式
+├── dataSet/                    # 数据集
+│   ├── train/                  # 训练集
+│   ├── valid/                  # 验证集
+│   └── fall.yaml               # 数据集配置文件
+├── buzzer.ino/                 # Arduino代码
+├── runs/                       # 模型训练结果（运行后生成）
+├── api_test.py                 # API性能测试脚本
+├── train.py                    # 模型训练脚本
+├── detect_fall.py              # 批量检测脚本
+├── package.json                # 前端依赖配置
+└── vite.config.js              # Vite配置
+```
 
 ## 功能特性
 
 - **实时摔倒检测**：基于YOLOv8目标检测模型，实时分析视频流
 - **姿态估计**：集成YOLOv8姿态估计模型，分析人体关键点
-- **智能报警**：连续检测到躺卧姿势3秒以上才触发报警
+- **智能报警**：连续检测摔倒触发报警
 - **多源视频输入**：支持摄像头实时流和本地视频文件
 - **硬件集成**：支持通过Arduino控制蜂鸣器实现物理报警
 - **数据管理**：基于SQLite数据库管理老人信息、管理员信息和检测日志
@@ -51,95 +88,8 @@
 - **Python**：3.8+
 - **Node.js**：16+
 
-## 快速开始
 
-### 1. 克隆项目
 
-```bash
-git clone https://github.com/zhangqiling0522/yolov8_fall_detection.git
-cd yolov8_fall_detection
-```
-
-### 2. 安装后端依赖
-
-```bash
-cd backend
-python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# Linux/Mac
-source venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-### 3. 安装前端依赖
-
-```bash
-cd ..
-npm install
-```
-
-### 4. 初始化数据库
-
-```bash
-cd backend
-python init_db.py
-```
-
-### 5. 启动后端服务
-
-```bash
-python main.py
-```
-
-### 6. 启动前端开发服务器
-
-```bash
-cd ..
-npm run dev
-```
-
-### 7. 访问系统
-
-打开浏览器访问：http://localhost:5173
-
-## 项目结构
-
-```
-yolov8_fall_detection/
-├── backend/                    # 后端代码
-│   ├── main.py                 # FastAPI应用主文件
-│   ├── database.py             # 数据库连接配置
-│   ├── models.py               # 数据库模型定义
-│   ├── init_db.py              # 数据库初始化脚本
-│   ├── requirements.txt        # 后端依赖列表
-│   └── ...                     # 其他辅助脚本
-├── src/                        # 前端代码
-│   ├── components/             # 组件目录
-│   │   └── Login.vue           # 登录组件
-│   ├── views/                  # 页面目录
-│   │   ├── Home.vue            # 实时监测页面
-│   │   └── Profile.vue         # 个人中心页面
-│   ├── router/                 # 路由配置
-│   │   └── index.js            # 路由定义
-│   ├── pic/                    # 图片资源
-│   ├── App.vue                 # 根组件
-│   ├── main.js                 # 入口文件
-│   └── style.css               # 全局样式
-├── dataSet/                    # 数据集
-│   ├── train/                  # 训练集
-│   ├── valid/                  # 验证集
-│   └── fall.yaml               # 数据集配置文件
-├── runs/                       # 模型训练结果（运行后生成）
-├── api_test.py                 # API性能测试脚本
-├── train.py                    # 模型训练脚本
-├── detect_fall.py              # 批量检测脚本
-├── package.json                # 前端依赖配置
-└── vite.config.js              # Vite配置
-```
 
 ## 模型训练
 
@@ -269,15 +219,18 @@ python train.py
 ```cpp
 const int buzzerPin = 8;
 const int buttonPin = 7;
-
+const int lightPin = 12;
 bool alarm = false;
-
+unsigned long previousMillis = 0;  // 记录上一次LED闪烁时间
+const long blinkInterval = 500;
 void setup() {
   pinMode(buzzerPin, OUTPUT);
   pinMode(buttonPin, INPUT_PULLUP);
+  pinMode(lightPin, OUTPUT);
   Serial.begin(9600);
+  digitalWrite(buzzerPin, LOW);
+  digitalWrite(lightPin, LOW);
 }
-
 void loop() {
   if (Serial.available()) {
     char cmd = Serial.read();
@@ -288,12 +241,19 @@ void loop() {
       alarm = false;
     }
   }
-  
   if (digitalRead(buttonPin) == LOW) {
     alarm = false;
   }
-  
   digitalWrite(buzzerPin, alarm ? HIGH : LOW);
+  if (alarm) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= blinkInterval) {
+      previousMillis = currentMillis;  // 更新时间
+      digitalWrite(lightPin, !digitalRead(lightPin));  // 翻转LED状态
+    }
+  } else {
+    digitalWrite(lightPin, LOW);
+  }
 }
 ```
 
@@ -360,23 +320,54 @@ python api_test.py
 - `api_response_bar.png` - 响应时间对比图
 - `api_combined_chart.png` - 组合图表
 
-## 贡献
+## 本地验证快速开始
 
-欢迎提交Issue和Pull Request！
+### 1. 克隆项目
 
-## 许可证
+```bash
+git clone https://github.com/zhangqiling0522/yolov8_fall_detection.git
+cd yolov8_fall_detection
+```
 
-本项目采用MIT许可证，详见LICENSE文件。
+### 2. 安装后端依赖
 
-## 联系方式
+```bash
+cd backend
+python -m venv venv
 
-如有问题或建议，请通过以下方式联系：
+# Windows
+venv\Scripts\activate
 
-- GitHub Issues: https://github.com/zhangqiling0522/yolov8_fall_detection/issues
-- 邮箱: zhangqiling0522@example.com
+# Linux/Mac
+source venv/bin/activate
 
----
+pip install -r requirements.txt
+```
 
-**项目状态**：开发中
+### 3. 安装前端依赖
 
-**最后更新**：2026年4月
+```bash
+cd ..
+npm install
+```
+
+### 4. 初始化数据库
+
+```bash
+cd backend
+python init_db.py
+```
+
+### 5. 启动后端服务
+
+```bash
+python main.py
+```
+
+### 6. 启动前端开发服务器
+
+```bash
+cd ..
+npm run dev
+```
+
