@@ -1,8 +1,8 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import get_db
-from models import OldPerson, Admin, Log
+from models import OldPerson, Admin, Log, TestData, SceneEnum, DetectionResultEnum
 import datetime
 from pydantic import BaseModel
 import numpy as np
@@ -12,6 +12,7 @@ import base64
 import io
 import serial
 import serial.tools.list_ports
+from typing import Optional
 
 # 串口通信设置
 ser = None
@@ -56,6 +57,26 @@ class AdminCreateRequest(BaseModel):
     position: str
     phone: str
     password: str
+
+# 记录摔倒事件请求模型
+class FallLogRequest(BaseModel):
+    room_number: str
+    phone: str
+    scene: str = "房间"
+    confidence: Optional[float] = None
+    detection_result: Optional[str] = None
+    admin_id: Optional[str] = None
+
+# 测试数据请求模型
+class TestDataRequest(BaseModel):
+    test_name: str
+    test_type: str
+    scene: str
+    total_samples: int
+    true_positive: int
+    false_positive: int
+    false_negative: int
+    true_negative: int
 
 # 加载训练好的模型
 model_path = "../runs/detect/train8/weights/best.pt"
@@ -118,23 +139,192 @@ def get_logs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
 
 # 记录摔倒事件
 @app.post("/logs/fall-detection")
-def create_fall_log(room_number: str, phone: str, db: Session = Depends(get_db)):
+def create_fall_log(request: FallLogRequest, db: Session = Depends(get_db)):
     # 检查房间是否存在老人
-    old_person = db.query(OldPerson).filter(OldPerson.room_number == room_number).first()
+    old_person = db.query(OldPerson).filter(OldPerson.room_number == request.room_number).first()
     if old_person:
         # 使用老人的电话号码
-        phone = old_person.phone
+        request.phone = old_person.phone
     
     # 创建日志记录
     new_log = Log(
-        room_number=room_number,
-        phone=phone,
-        status="摔倒检测"
+        room_number=request.room_number,
+        phone=request.phone,
+        status="摔倒检测",
+        scene=request.scene,
+        confidence=request.confidence,
+        detection_result=request.detection_result,
+        admin_id=request.admin_id
     )
     db.add(new_log)
     db.commit()
     db.refresh(new_log)
     return new_log
+
+# 获取场景列表
+@app.get("/scenes")
+def get_scenes():
+    return {
+        "scenes": [
+            {"value": "房间", "label": "房间"},
+            {"value": "大厅", "label": "大厅"},
+            {"value": "院落", "label": "院落"}
+        ]
+    }
+
+# 添加测试数据
+@app.post("/test-data")
+def create_test_data(data: TestDataRequest, db: Session = Depends(get_db)):
+    new_test_data = TestData(
+        test_name=data.test_name,
+        test_type=data.test_type,
+        scene=data.scene,
+        total_samples=data.total_samples,
+        true_positive=data.true_positive,
+        false_positive=data.false_positive,
+        false_negative=data.false_negative,
+        true_negative=data.true_negative
+    )
+    db.add(new_test_data)
+    db.commit()
+    db.refresh(new_test_data)
+    return new_test_data
+
+# 获取测试数据列表
+@app.get("/test-data")
+def get_test_data(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    test_data = db.query(TestData).offset(skip).limit(limit).all()
+    return test_data
+
+# 获取识别率统计
+@app.get("/statistics/accuracy")
+def get_accuracy_statistics(scene: Optional[str] = None, test_type: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(TestData)
+    
+    if scene:
+        query = query.filter(TestData.scene == scene)
+    if test_type:
+        query = query.filter(TestData.test_type == test_type)
+    
+    test_data_list = query.all()
+    
+    if not test_data_list:
+        return {
+            "total_samples": 0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1_score": 0.0,
+            "accuracy": 0.0
+        }
+    
+    # 汇总数据
+    total = 0
+    tp = 0
+    fp = 0
+    fn = 0
+    tn = 0
+    
+    for data in test_data_list:
+        total += data.total_samples
+        tp += data.true_positive
+        fp += data.false_positive
+        fn += data.false_negative
+        tn += data.true_negative
+    
+    # 计算指标
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    accuracy = (tp + tn) / total if total > 0 else 0.0
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    
+    return {
+        "total_samples": total,
+        "true_positive": tp,
+        "false_positive": fp,
+        "false_negative": fn,
+        "true_negative": tn,
+        "precision": precision,
+        "recall": recall,
+        "accuracy": accuracy,
+        "f1_score": f1_score
+    }
+
+# 获取按场景分组的统计数据
+@app.get("/statistics/by-scene")
+def get_statistics_by_scene(db: Session = Depends(get_db)):
+    scenes = ["房间", "大厅", "院落"]
+    results = []
+    
+    for scene in scenes:
+        query = db.query(TestData).filter(TestData.scene == scene)
+        test_data_list = query.all()
+        
+        if test_data_list:
+            total = 0
+            tp = 0
+            fp = 0
+            fn = 0
+            tn = 0
+            
+            for data in test_data_list:
+                total += data.total_samples
+                tp += data.true_positive
+                fp += data.false_positive
+                fn += data.false_negative
+                tn += data.true_negative
+            
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            accuracy = (tp + tn) / total if total > 0 else 0.0
+            f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+            
+            results.append({
+                "scene": scene,
+                "total_samples": total,
+                "precision": precision,
+                "recall": recall,
+                "accuracy": accuracy,
+                "f1_score": f1_score
+            })
+    
+    return results
+
+# 与同类研究对比
+@app.get("/statistics/comparison")
+def get_comparison_statistics():
+    # 模拟与同类研究的对比数据
+    return {
+        "comparison": [
+            {
+                "method": "本系统",
+                "precision": 0.925,
+                "recall": 0.908,
+                "accuracy": 0.931,
+                "f1_score": 0.916
+            },
+            {
+                "method": "传统YOLOv5",
+                "precision": 0.873,
+                "recall": 0.856,
+                "accuracy": 0.895,
+                "f1_score": 0.864
+            },
+            {
+                "method": "基于骨骼姿态",
+                "precision": 0.852,
+                "recall": 0.821,
+                "accuracy": 0.873,
+                "f1_score": 0.836
+            },
+            {
+                "method": "深度传感器",
+                "precision": 0.889,
+                "recall": 0.867,
+                "accuracy": 0.902,
+                "f1_score": 0.878
+            }
+        ]
+    }
 
 # 删除指定日志
 @app.delete("/logs/{log_id}")
